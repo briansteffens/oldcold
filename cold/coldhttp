@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+
+import cherrypy, time, json
+from datetime import datetime, timedelta
+from threading import Thread
+from queue import Queue, Empty
+from cold import *
+
+state_queue = Queue()
+poll_queue = Queue()
+solution_queue = Queue()
+kill_all = False
+
+class State(object):
+	def __init__(self):
+		self.mode = "standby"
+		self.compilation = None
+		self.solutions = []
+		self.nodes = {}
+
+class Compilation(object):
+	def __init__(self):
+		self.var_shadow = 3
+		self.max_depth = 5
+		self.pattern_files = []
+		self.functions = {}
+		self.constants = []
+		self.constraints = {}
+
+class Node(object):
+	def __init__(self, name):
+		self.name = name
+		self.state = "disconnected"
+		self.last_ping = None
+	def update(self):
+		if self.last_ping is None or \
+		   datetime.now() - self.last_ping > timedelta(seconds=90):
+			self.state = "disconnected"
+
+state = State()
+
+def state_thread():
+	global state_queue, state, poll_queue, solution_queue
+	try:
+		print("State system started up.")
+		while True:
+			m = state_queue.get()
+
+			if m["msg"] == "end":
+				state_queue.task_done()
+				break
+			elif m["msg"] == "job":
+				compilation = Compilation()
+				compilation.var_shadow = m["job"]["var_shadow"]
+				compilation.max_depth = m["job"]["max_depth"]
+				compilation.pattern_files = m["job"]["pattern_files"]
+				compilation.functions = m["job"]["functions"]
+				compilation.constants = m["job"]["constants"]
+				compilation.constraints = m["job"]["constraints"]
+				state.mode = "active"
+				state.solutions = []
+				state.compilation = compilation
+				enqueue_jobs(compilation)
+			elif m["msg"] == "solution":
+				state.solutions.append(m["solution"])
+				solution_queue.put(m["solution"])
+			elif m["msg"] == "standby":
+				state.mode = "standby"
+				with poll_queue.mutex:
+					poll_queue.queue.clear()
+				with solution_queue.mutex:
+					solution_queue.queue.clear()
+			elif m["msg"] == "node":
+				if m["node"]["name"] in state.nodes:
+					node = state.nodes[m["node"]["name"]]
+				else:
+					node = Node(m["node"]["name"])
+				node.state = m["node"]["state"]
+				node.last_ping = datetime.now()
+				if m["node"]["name"] not in state.nodes:
+					state.nodes[m["node"]["name"]] = node
+				if poll_queue.qsize() == 0:
+					any_active = False
+					for node in state.nodes:
+						if state.nodes[node].state == "active":
+							any_active = True
+							break
+					if not any_active:
+						state.mode = "standby"
+			else:
+				print("Unrecognized message received in state thread: "+str(m))
+
+			state_queue.task_done()
+		print("State system shutting down.")
+	except Exception as e:
+		print(e)
+
+def enqueue_jobs(compilation):
+	global poll_queue, kill_all
+	total_patterns = len(compilation.functions)
+	for pattern_file in compilation.pattern_files:
+		with open(pattern_file + ".patterns") as f:
+			for pattern in f.read().split("-----"):
+				if pattern.strip() != "":
+					total_patterns += 1
+	for depth in range(1, compilation.max_depth+1):
+		total_programs = total_patterns**depth
+		program_set = 1
+		program_set_size = 500
+		while (program_set-1)*program_set_size < total_programs:
+			job = Job()
+			job.depth = depth
+			job.var_shadow = compilation.var_shadow
+			job.program_set_size = program_set_size
+			job.program_set = program_set
+			job.pattern_files = compilation.pattern_files
+			job.functions = compilation.functions
+			job.constants = compilation.constants
+			job.constraints = compilation.constraints
+			poll_queue.put(job.save())
+			program_set += 1
+
+
+class Http(object):
+	def __init__(self):
+		pass
+
+	def run(self):
+		userpassdict = {
+			"user": "pass",
+			"clusternode": "sn@H3rj3GHJd#HBR$$^37gH#ER721!@#",
+		}
+		config = {"/": {
+			"tools.trailing_slash.on": False,
+			"tools.auth_basic.on": True,
+			"tools.auth_basic.realm": "cold",
+			"tools.auth_basic.checkpassword":
+				cherrypy.lib.auth_basic.checkpassword_dict(userpassdict),
+		}}
+
+		global_vars = {}
+		local_vars = {}
+		with open("/etc/cold/server.conf") as f:
+			exec(f.read(), global_vars, local_vars)
+
+		cherrypy.tree.mount(self, "/", config)
+		cherrypy.server.socket_host = local_vars["host"]
+		cherrypy.server.socket_port = local_vars["port"]
+		cherrypy.engine.start()
+		cherrypy.engine.block()
+
+	def read_body(self):
+		if "Content-Length" not in cherrypy.request.headers:
+			return None
+
+		return cherrypy.request.body.read(int(cherrypy.request\
+											  .headers["Content-Length"]))
+
+	@cherrypy.expose
+	def default(self, *args, **kwargs):
+		with open("index.html") as f:
+			return f.read()
+
+	@cherrypy.expose
+	def ping(self, *args, **kwargs):
+		global poll_queue,state_queue
+
+		ret = {
+			"mode": state.mode,
+			"solutions": [],
+			"nodes": [],
+			"solution_count": len(state.solutions),
+			"jobs_remaining": poll_queue.qsize(),
+			"state_queue_size": state_queue.qsize(),
+		}
+
+		if cherrypy.request.method == "POST":
+			req = json.loads(str(self.read_body().decode("utf-8")))
+
+			if "node" in req:
+				state_queue.put({"msg": "node","node": req["node"]})
+
+			for solution in req["solutions"]:
+				state_queue.put({"msg": "solution","solution": solution})
+		elif cherrypy.request.method == "GET":
+			while True:
+				try:
+					ret["solutions"].append(solution_queue.get(False))
+				except Empty:
+					break
+			for node in state.nodes:
+				state.nodes[node].update()
+				ret["nodes"].append({
+					"name": state.nodes[node].name,
+					"state": state.nodes[node].state
+				})
+
+		return json.dumps(ret)
+
+	@cherrypy.expose
+	def poll(self, *args, **kwargs):
+		global poll_queue
+		try:
+			return poll_queue.get(False)
+		except Empty:
+			return ""
+
+	@cherrypy.expose
+	def solutions(self, *args, **kwargs):
+		global state
+		ret = ""
+		for solution in state.solutions:
+			ret += solution.replace("\n", "<br />") + "<hr />"
+		return ret
+
+	@cherrypy.expose
+	def job(self, *args, **kwargs):
+		if cherrypy.request.method == "POST":
+			global state_queue
+			state_queue.put({
+				"msg": "job",
+				"job": json.loads(self.read_body().decode("utf-8"))["job"]
+			})
+
+	@cherrypy.expose
+	def standby(self, *args, **kwargs):
+		global state_queue
+		state_queue.put({"msg": "standby"})
+
+	@cherrypy.expose
+	def jquery(self, *args, **kwargs):
+		with open("lib/jquery-2.0.3.min.js") as f:
+			return f.read()
+if __name__ == "__main__":
+	t = Thread(target=state_thread)
+	t.daemon = True
+	t.start()
+	Http().run()
+	state_queue.put({"msg": "end"})
+	t.join()

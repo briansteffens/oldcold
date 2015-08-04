@@ -1,0 +1,192 @@
+#!/usr/bin/cold
+
+bu:
+	set limit = 50
+	
+	stash
+	push $limit, 2
+	jump multiply
+	pop double_limit
+	restore
+	
+	buffer numbers $double_limit
+	set cx = 0
+	jump setup_buffer
+	
+	push $limit
+	jump all_products
+	
+	set cx = 2
+	jump write_primes
+	
+	kill numbers
+
+
+setup_buffer:
+	write numbers $cx 1
+	set cx = $cx+
+	($cx < $double_limit) jump setup_buffer
+
+
+all_products:
+	pop cx
+	set ax = 1
+	jump _all_products_left
+	
+_all_products_left:
+	set ax = $ax+
+	set bx = $ax-
+	jump _all_products_right
+	($ax < $cx) jump _all_products_left
+	
+_all_products_right:
+	set bx = $bx+
+	($bx > $cx) return
+
+	stash
+	push $ax, $bx
+	jump multiply
+	pop temp
+	restore
+	
+	($temp < $double_limit) write numbers $temp 0
+
+	jump _all_products_right
+
+
+write_primes:
+	read numbers $cx temp
+	($temp == 1) print $cx
+	set cx = $cx+
+	($cx < $limit+) jump write_primes
+
+
+multiply:
+	pop ax, bx
+	set cx = 0
+	set dx = 0
+	
+	set an = 0
+	set bn = 0
+	($ax < 0) set an = 1
+	($bx < 0) set bn = 1
+	
+	set positive = 0
+	($an == $bn) set positive = 1
+	
+	stash
+	push $ax
+	jump absolute
+	pop temp
+	restore
+	set ax = $temp
+	
+	stash
+	push $bx
+	jump absolute
+	pop temp
+	restore
+	set bx = $temp
+	
+	jump _multiply
+	
+	($positive == 1) push $dx
+	($positive == 1) return
+	
+	stash
+	push $dx
+	jump negative
+	pop temp
+	restore
+	push $temp
+	
+_multiply:
+	stash
+	push $ax, $dx
+	jump add
+	pop temp
+	restore
+	set dx = $temp
+	set cx = $cx+
+
+	($cx < $bx) jump _multiply
+	
+
+# = p1 + p2
+add:
+	pop ax, bx
+	set cx = 0
+	set dx = $ax
+	jump _add
+	($dx == 0) push $ax
+	($dx != 0) push $dx
+
+_add:
+	($bx < 0) jump _add_dec
+	($bx > 0) jump _add_inc
+	($cx != $bx) jump _add
+
+_add_inc:
+	set cx = $cx+
+	set dx = $dx+
+	
+_add_dec:
+	set cx = $cx-
+	set dx = $dx-
+
+
+# = p1 - p2
+subtract:
+	pop ax, bx
+
+	push $bx
+	jump negative
+	pop bx
+	
+	push $ax, $bx
+	jump add
+
+
+# = -p1
+negative:
+	pop cx
+	set dx = 0
+	jump _negative
+	push $dx
+
+_negative:
+	set cx = $cx-
+	set dx = $dx-
+	($cx != 0) jump _negative
+
+
+positive:
+	pop cx
+	set dx = 0
+	jump _positive
+	push $dx
+	
+_positive:
+	set cx = $cx+
+	set dx = $dx+
+	($cx != 0) jump _positive
+
+
+absolute:
+	pop ax
+	
+	($ax > -1) push $ax
+	($ax > -1) return
+	
+	stash
+	push $ax
+	jump positive
+	pop temp
+	restore
+	push $temp
+
+
+
+
+
+

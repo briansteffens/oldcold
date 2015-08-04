@@ -1,0 +1,20 @@
+add [i|o] [i|o|c] [o]
+[next]
+-----
+mul [i] [i|c|o] [o]
+[next]
+-----
+cmp [i|o] [cmp] [i|c|o] [j1]
+[next]
+[j1]:
+[next]
+-----
+add 0 0 [l1]
+add [i|o] 0 [l2]
+[j1]:
+cmp [l1] > [i|c] [j2]
+[next]
+add [l1] [i|c] [l1]
+jmp [j1]
+[j2]:
+[next]

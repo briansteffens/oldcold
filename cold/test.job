@@ -1,0 +1,24 @@
+!!depth 4
+!!var_shadow 2
+
+!!program_set_size 200000
+!!program_set 1
+
+!!patterns
+	default
+
+!!functions
+def addfunc 1
+	add l0 l1 o2
+	ret o2
+def mulfunc 1
+	mul l0 l2 o1
+	ret o1
+
+!!constants
+	1
+	9
+
+!!constraints
+	3 => 10
+	4 => 16

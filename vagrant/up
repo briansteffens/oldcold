@@ -1,0 +1,13 @@
+#!/bin/bash
+
+vagrant up
+
+tmux new-session -d -s cold -n http
+tmux send-keys -t cold "vagrant ssh -c \"bash -c 'cd /vagrant/cold; exec bash'\"" ^m "./coldhttp" ^m
+sleep 1
+
+tmux new-window -n "node"
+tmux send-keys -t cold "vagrant ssh -c \"bash -c 'cd /vagrant/cold; exec bash'\"" ^m "./coldd" ^m
+sleep 1
+
+tmux attach -t cold

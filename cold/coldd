@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+
+import sys, requests, json, time
+from datetime import datetime, timedelta
+from subprocess import PIPE, Popen
+from threading import Thread
+from queue import Queue,Empty
+
+cluster_mode = "standby"
+worker = None
+
+worker_queue = Queue()
+solution_queue = Queue()
+
+global_vars = {}
+local_vars = {}
+with open("/etc/cold/node.conf") as f:
+	exec(f.read(), global_vars, local_vars)
+threads = local_vars["threads"]
+node_name = local_vars["name"]
+node_state = "idle"
+
+config = {
+	"url": local_vars["server"],
+	"auth": ("clusternode","sn@H3rj3GHJd#HBR$$^37gH#ER721!@#"),
+}
+
+def solution_thread(out, queue):
+	buf = ""
+	for line in iter(out.readline, b""):
+		line = line.decode("utf-8")
+		if line == "-----\n":
+			if line[:5] == "STATS":
+				break
+			queue.put(buf)
+			buf = ""
+			continue
+		buf += line
+	out.close()
+
+def worker_thread(worker_queue, solution_queue):
+	global config, node_state, threads
+	active = False
+	proc = None
+	proc_thread = None
+	while True:
+		try:
+			item = worker_queue.get(True, .1)			
+			if item["msg"] == "end":
+				worker_queue.task_done()
+				return
+			if item["msg"] == "start":
+				active = True
+			elif item["msg"] == "stop":
+				active = False
+				del proc
+				proc = None
+				proc_thread.join()
+			worker_queue.task_done()
+		except Empty:
+			pass
+		
+		if active:
+			if proc is not None:
+				proc.poll()
+				if proc.returncode is not None:
+					del proc
+					proc = None
+					proc_thread.join()
+					node_state = "idle"
+			if proc is None:
+				try:
+					r = requests.get(config["url"]+"poll",auth=config["auth"])
+					if r.status_code != 200:
+						raise Exception("/poll returned status code "+str(r.status_code))
+				except Exception as e:
+					node_state = "failed"
+					print(e)
+					time.sleep(2)
+					continue
+				if r.text == "":
+					time.sleep(1)
+				else:
+					with open("cluster.temp.job", "w") as f:
+						f.write(r.text)
+					proc = Popen(["./cold","-j","cluster.temp.job","-t",str(threads)],stdout=PIPE,bufsize=1,close_fds="posix" in sys.builtin_module_names)
+					proc_thread = Thread(target=solution_thread,args=(proc.stdout,solution_queue))
+					proc_thread.daemon = True
+					proc_thread.start()
+					node_state = "active"
+		
+
+worker = Thread(target=worker_thread,args=(worker_queue,solution_queue))
+worker.daemon = True
+worker.start()
+
+while True:
+	solutions = []
+	while True:
+		try:
+			item = solution_queue.get(False)
+		except Empty:
+			break
+		solutions.append(item)
+		solution_queue.task_done()
+	
+	data = {
+		"solutions": solutions,
+		"node": {
+			"name": node_name,
+			"state": node_state
+		}
+	}
+	try:
+		r = requests.post(config["url"]+"ping",data=json.dumps(data),auth=config["auth"])
+		if r.status_code != 200:
+			raise Exception("/ping returned status code " + str(r.status_code))
+	except Exception as e:
+		print(e)
+		time.sleep(2)
+		continue
+	
+	check_res = json.loads(r.text)
+	
+	if cluster_mode != check_res["mode"]:
+		if check_res["mode"] == "active":
+			worker_queue.put({"msg": "start"})
+		elif check_res["mode"] == "standby":
+			worker_queue.put({"msg": "stop"})
+		
+	cluster_mode = check_res["mode"]
+	time.sleep(5 if cluster_mode == "standby" else 1)
+
+worker_queue.put({"msg": "end"})
+worker.join()
+

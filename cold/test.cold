@@ -1,0 +1,17 @@
+#!/usr/bin/cold
+
+def addfunc 1
+	add l0 l1 o2
+	ret o2
+	
+def mulfunc 1
+	mul l0 l2 o1
+	ret o1
+
+def main 1
+	mul p1 p1 o0
+	cmp o0 != 9 j0
+	add o0 1 o1
+	ret o1
+	j0:
+	ret o0

@@ -1,0 +1,157 @@
+<html>
+<head>
+	<script src="jquery"></script>
+	
+	<style>
+		body {
+			font-family: "Lucida Sans Unicode", "Lucida Grande", sans-serif;
+			margin: 0px;
+		}
+		#solutions {
+			border-left: solid 2px #aaaaaa;
+			position: fixed;
+			width: 250px;
+			top: 0px;
+			right: 0px;
+			bottom: 0px;
+			overflow-y: scroll;
+		}
+		#nodes {
+			border: solid 2px #aaaaaa;
+			position: fixed;
+			width: 250px;
+			top: 250px;
+			bottom: 0px;
+		}
+		#job {
+			border: solid 2px #aaaaaa;
+			position: fixed;
+			left: 260px;
+			right: 260px;
+			top: 0px;
+			bottom: 0px;
+		}
+	</style>
+	
+	<script>
+		function check() {
+			$.get("ping", function(data) {
+				$("#cluster_status").html(data.mode);
+				$("#total_solutions").html(data.solution_count);
+				$("#jobs_remaining").html(data.jobs_remaining);
+				$("#state_queue_size").html(data.state_queue_size);
+				for (i = 0; i < data.solutions.length; i++) {
+					$("#solutions").append(data.solutions[i].split("\n").join("<br>"));
+					$("#solutions").append("<hr>");
+				}
+				if (data.solution_count == 0)
+					$("#solutions").html("");
+				$("#nodes").html("");
+				for (i = 0; i < data.nodes.length; i++) {
+					$("#nodes").append(data.nodes[i].name + " - " + data.nodes[i].state + "<br>");
+				}
+				if (data.mode == "active")
+					$("#standby").show();
+				else
+					$("#standby").hide();
+			}, "json")
+			.fail(function() {
+				$("#cluster_status").html("disconnected");
+			});
+		}
+		
+		function standby() {
+			$.get("standby");
+		}
+		
+		function job() {
+			j = {
+				job: {
+					var_shadow: parseInt($("#var_shadow").val()),
+					max_depth: parseInt($("#max_depth").val()),
+					pattern_files: [],
+					functions: {},
+					constants: [],
+					constraints: {}
+				}
+			};
+			parts = $("#constants").val().split(",");
+			for (i = 0; i < parts.length; i++) {
+				part = parts[i].trim();
+				if (part !== "")
+					j.job.constants.push(part);
+			}
+			parts = $("#pattern_files").val().split(",");
+			for (i = 0; i < parts.length; i++) {
+				part = parts[i].trim();
+				if (part !== "")
+					j.job.pattern_files.push(part);
+			}
+			parts = $("#constraints").val().split("\n");
+			for (i = 0; i < parts.length; i++) {
+				part = parts[i].trim();
+				if (part === "") continue;
+				sides = part.split("=>");
+				j.job.constraints[sides[0].trim()] = sides[1].trim();
+			}
+			$.ajax("job", {data: JSON.stringify(j), contentType: "application/json", type: "POST"}, function(data) {
+			}, "json");
+		}
+		
+		$(function() {
+			$("#standby").hide();
+			setInterval(check,1000);
+		});
+	</script>
+</head>
+<body>
+	<h3>cold</h3>
+	
+	cluster status:
+	<span id="cluster_status"></span>
+	<a href="#" onclick="standby();" id="standby">[ standby ]</a>
+	<br />
+	
+	total solutions:
+	<span id="total_solutions"></span>
+	<br />
+	
+	jobs remaining:
+	<span id="jobs_remaining"></span>
+	<br />
+	
+	state queue size:
+	<span id="state_queue_size"></span>
+	<br />
+	
+	<div id="nodes"></div>
+	
+	<div id="solutions"></div>
+	
+	<div id="job">
+		max depth:
+		<input id="max_depth" type="text" value="5" />
+		<br />
+		
+		var shadow:
+		<input id="var_shadow" type="text" value="2" />
+		<br />
+		
+		constants:
+		<input id="constants" type="text" value="1,9" />
+		<br />
+		
+		pattern files:
+		<input id="pattern_files" type="text" value="default" />
+		<br />
+		
+		constraints:
+		<br />
+		<textarea id="constraints" rows="10" cols="40">3 => 10&#13;&#10;4 => 16</textarea>
+		<br />
+		
+		<input type="submit" onclick="job();" />
+	</div>
+	
+</body>
+</html>
