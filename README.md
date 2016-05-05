@@ -2,7 +2,7 @@ cold
 ====
 
 *This project has been superceded by
-https://github.com/briansteffens/ccold*
+https://github.com/briansteffens/cold*
 
 This is currently a just-for-fun language experiment. Cold is an
 assembly-influenced language designed to be easy to generate
